@@ -1,0 +1,18 @@
+[credentials]
+user = "email@example.com"
+password = "example@123"
+
+[server]
+host = "my.smtp.com"
+port = 587
+
+[database]
+user = "my_user"
+password = "my_password"
+host = "my_host"
+port = 1521
+sid = "my_sid"
+
+[service]
+interval = 100
+throttle = 100
