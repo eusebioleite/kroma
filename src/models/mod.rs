@@ -80,3 +80,44 @@ impl Mail {
         })
     }
 }
+
+pub struct Attachment {
+    pub name: String,
+    pub extension: String,
+    pub content: Vec<u8>,
+    pub inline: String,
+}
+
+impl Attachment {
+    pub async fn from_row(row: &Row<'_>) -> anyhow::Result<Self> {
+        let name: String = row
+            .get(0)
+            .context("Failed to read 'name' (column 0) from row")?;
+
+        let extension: String = row
+            .get(1)
+            .context("Failed to read 'extension' (column 1) from row")?;
+        
+        let blob: sibyl::BLOB<'_> = row
+            .get(2)
+            .context("Failed to get Blob descriptor from column 2")?;
+
+        let len = blob.len().await.context("Failed to get BLOB length")?;
+        let mut content = Vec::with_capacity(len);
+        
+        blob.read(0, len, &mut content)
+            .await
+            .context("Failed to read BLOB payload")?;
+
+        let inline: String = row
+            .get(3)
+            .context("Failed to read 'inline' (column 3) from row")?;
+
+        Ok(Self {
+            name,
+            extension,
+            content,
+            inline,
+        })
+    }
+}

@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 
-use crate::{database, models::Mail};
+use crate::{database, models::{Attachment, Mail}};
 
 pub async fn update_queue_origin() -> Result<()> {
     let session = database::get_pool()
@@ -72,6 +72,46 @@ pub async fn get_mails() -> Result<Vec<Mail>> {
     Ok(queue)
 }
 
+pub async fn get_attachments(queue_code: i32) -> Result<Vec<Attachment>> {
+    let session = database::get_pool()
+        .get_session()
+        .await
+        .context("Failed to get session from pool.")?;
+
+    let sql = r#"
+        select 
+            AMA_NOMARQ as "name",
+            REPLACE(AMA_EXTARQ , '.', '') as "entension",
+            AMA_ANEXO  as "content",
+            NVL(AMA_INLINE, 0) as "inline"
+        from A_MAIL_ANEX
+        where AMA_CODFIL = :1
+    "#;
+
+    let stmt = session
+        .prepare(sql)
+        .await
+        .context("Failed to prepare get_attachments for A_MAIL_ANEX")?;
+
+    let rows = stmt
+        .query(queue_code)
+        .await
+        .context("Failed to query queue records from Oracle A_MAIL_ANEX")?;
+
+    let mut queue = Vec::new();
+
+    while let Some(row) = rows
+        .next()
+        .await
+        .context("Failed to fetch next row from get_attachments query")?
+    {
+        let attachment = Attachment::from_row(&row).await.context("Failed to parse row into Attachment model")?;
+        queue.push(attachment);
+    }
+
+    Ok(queue)
+}
+
 pub async fn update_status(
     queue_id: i32,
     status: &str,
@@ -99,7 +139,6 @@ pub async fn update_status(
         .await
         .context("Failed to prepare statement for update_status")?;
 
-    // Oracle VARCHAR2 max is 4000 bytes. Truncate error_msg if needed.
     let truncated_error: Option<String>;
     let error_msg = match error_msg {
         Some(msg) if msg.len() > 4000 => {
@@ -108,15 +147,12 @@ pub async fn update_status(
                 queue_id,
                 msg.len()
             );
-            // Truncate at a character boundary — slicing &str by raw byte index panics if
-            // byte 4000 falls inside a multi-byte UTF-8 character (e.g. accented chars, CJK).
             let cut = msg
                 .char_indices()
                 .map(|(i, _)| i)
                 .take_while(|&i| i < 4000)
                 .last()
                 .map(|i| {
-                    // Advance past the last included character so it is fully included.
                     msg[i..].chars().next().map_or(i, |c| i + c.len_utf8())
                 })
                 .unwrap_or_else(|| msg.len().min(4000));

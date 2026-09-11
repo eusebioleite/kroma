@@ -1,7 +1,7 @@
 use anyhow::Context;
 use lettre::{
     AsyncSmtpTransport, AsyncTransport, Tokio1Executor,
-    message::{MessageBuilder, header::ContentType},
+    message::{MessageBuilder, header::ContentType, MultiPart, SinglePart, Attachment as LettreAttachment},
     transport::smtp::authentication::Credentials,
 };
 use tracing::{error, info};
@@ -71,13 +71,6 @@ async fn main() -> anyhow::Result<()> {
         .port(cfg.server.port)
         .build();
 
-    info!("Updating A_MAIL_QUEUE origin...");
-    if let Err(e) = repository::update_queue_origin().await {
-        error!("Failed to update queue origin: {:#}", e);
-        // Depending on requirements, we can either exit here or continue.
-        // Assuming we should stop if initialization fails.
-        std::process::exit(1);
-    }
 
     let mut interval = tokio::time::interval(std::time::Duration::from_secs(
         config::get().service.interval,
@@ -101,22 +94,33 @@ async fn main() -> anyhow::Result<()> {
 
         info!("Found {} mails in the queue.", mails.len());
 
+        info!("Updating A_MAIL_QUEUE origin...");
+        if let Err(e) = repository::update_queue_origin().await {
+            error!("Failed to update queue origin: {:#}", e);
+            std::process::exit(1);
+        }
+
         for mail in mails {
+            let attachments = match repository::get_attachments(mail.code).await {
+                Ok(atts) => atts,
+                Err(e) => {
+                    error!("Failed to fetch attachments for {}: {:#}", mail.code, e);
+                    continue;
+                }
+            };
+
             info!(
                 code = mail.code,
                 to = mail.to,
                 subject = mail.subject,
                 sent = mail.sent,
+                files = attachments.len(),
                 "Sending mail."
             );
 
-            match send_mail(&mailer, &mail).await {
+            match send_mail(&mailer, &mail, Some(attachments)).await {
                 Ok(()) => {
                     info!("Mail sent successfully: {}", mail.code);
-                    // NOTE: at-least-once delivery — if SMTP succeeds but `update_status` fails
-                    // (e.g. transient Oracle error), the mail stays in the queue (AMQ_SNDCNT = 0)
-                    // and will be resent on the next interval tick. This is acceptable for this
-                    // service's requirements; idempotency at the recipient level is not guaranteed.
                     if let Err(e) = update_status(mail.code, "S", None, &mail.to).await {
                         error!("Failed to update status for {}: {:#}", mail.code, e);
                     }
@@ -141,15 +145,11 @@ async fn main() -> anyhow::Result<()> {
     }
 }
 
-/// Runs `-t` mode: tests SMTP connectivity and Oracle session, then exits.
-/// Passwords are never printed. Output goes directly to stdout (no logging).
 async fn test_config(target: Option<String>) {
     let cfg = config::get();
 
-    // --- credentials (informational — SMTP password can't be verified without sending) ---
-    println!("credentials: {} / [hidden]", cfg.credentials.user);
+    println!("email: {}", cfg.credentials.user);
 
-    // --- SMTP server connectivity (TCP + EHLO handshake) ---
     print!("server:      {}:{}  ", cfg.server.host, cfg.server.port);
     let smtp_result: anyhow::Result<bool> = async {
         let credentials = Credentials::new(
@@ -167,12 +167,18 @@ async fn test_config(target: Option<String>) {
             .build();
             
         if let Some(email_addr) = &target {
+            let attachment = LettreAttachment::new(String::from("test.txt"))
+                .body(b"This is a test attachment from Kroma.".to_vec(), ContentType::parse("text/plain").unwrap());
+            
+            let multipart = MultiPart::mixed()
+                .singlepart(SinglePart::plain(String::from("This is a test email from Kroma.")))
+                .singlepart(attachment);
+
             let email = MessageBuilder::new()
                 .from(cfg.credentials.user.parse().context("Error parsing 'from' (using credentials user).")?)
                 .to(email_addr.parse().context("Error parsing 'to'.")?)
                 .subject("Kroma Test Email")
-                .header(ContentType::TEXT_PLAIN)
-                .body(String::from("This is a test email from Kroma."))
+                .multipart(multipart)
                 .context("Error building test email.")?;
             mailer.send(email).await?;
             Ok(true)
@@ -188,7 +194,6 @@ async fn test_config(target: Option<String>) {
         Err(e)    => println!("FAIL — {e}"),
     }
 
-    // --- Oracle session ---
     print!(
         "database:    {}@{}:{}/{}  ",
         cfg.database.user, cfg.database.host, cfg.database.port, cfg.database.sid
@@ -206,11 +211,10 @@ async fn test_config(target: Option<String>) {
     }
 }
 
-async fn send_mail(mailer: &AsyncSmtpTransport<Tokio1Executor>, mail: &Mail) -> anyhow::Result<()> {
+async fn send_mail(mailer: &AsyncSmtpTransport<Tokio1Executor>, mail: &Mail, attachments: Option<Vec<crate::models::Attachment>>) -> anyhow::Result<()> {
     let mut email = MessageBuilder::new()
         .from(mail.from.parse().context("Error parsing 'from'.")?)
-        .subject(&mail.subject)
-        .header(ContentType::TEXT_HTML);
+        .subject(&mail.subject);
 
     for recipient in mail.to.split(';') {
         let recipient = recipient.trim();
@@ -219,8 +223,43 @@ async fn send_mail(mailer: &AsyncSmtpTransport<Tokio1Executor>, mail: &Mail) -> 
         }
     }
 
+    let mut multipart = MultiPart::mixed()
+        .singlepart(SinglePart::html(mail.html.clone()));
+
+    if let Some(atts) = attachments {
+        for att in atts {
+            let mime_str = match att.extension.to_lowercase().as_str() {
+                "pdf" => "application/pdf",
+                "png" => "image/png",
+                "jpg" | "jpeg" => "image/jpeg",
+                "txt" => "text/plain",
+                "html" | "htm" => "text/html",
+                "csv" => "text/csv",
+                "xml" => "application/xml",
+                _ => "application/octet-stream",
+            };
+            let content_type = ContentType::parse(mime_str).unwrap_or_else(|_| ContentType::parse("application/octet-stream").unwrap());
+            
+            let file_name = if att.name.to_lowercase().ends_with(&format!(".{}", att.extension.to_lowercase())) {
+                att.name.clone()
+            } else {
+                format!("{}.{}", att.name, att.extension)
+            };
+            
+            let lettre_att = if att.inline == "1" {
+                LettreAttachment::new_inline(file_name.clone())
+                    .body(att.content, content_type)
+            } else {
+                LettreAttachment::new(file_name)
+                    .body(att.content, content_type)
+            };
+            
+            multipart = multipart.singlepart(lettre_att);
+        }
+    }
+
     let email = email
-        .body(mail.html.clone())
+        .multipart(multipart)
         .context("Error building email.")?;
 
     mailer.send(email)
