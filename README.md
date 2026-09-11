@@ -33,7 +33,7 @@ O **Kroma** é um daemon escrito em Rust que monitora uma fila de e-mails armaze
 ## Instalação
 
 ```bash
-git clone https://github.com/seu-usuario/kroma.git
+git clone https://github.com/eusebioleite/kroma.git
 cd kroma
 
 # Defina a variável OCI_LIB_DIR
