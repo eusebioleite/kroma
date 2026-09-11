@@ -34,8 +34,8 @@ jobs:
           Invoke-WebRequest -Uri $sdkUrl -OutFile "sdk.zip"
           
           Write-Host "Extraindo artefatos para C:\oracle..."
-          Expand-Archive -Path basic.zip -DestinationPath "C:\oracle"
-          Expand-Archive -Path sdk.zip -DestinationPath "C:\oracle"
+          Expand-Archive -Path basic.zip -DestinationPath "C:\oracle" -Force
+          Expand-Archive -Path sdk.zip -DestinationPath "C:\oracle" -Force
           
           $clientPath = "C:\oracle\instant_client"
           $sdkLibPath = "$clientPath\sdk\lib\msvc"
