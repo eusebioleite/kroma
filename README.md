@@ -7,7 +7,7 @@
 
 > Serviço de despacho de e-mails via fila Oracle — substituto leve e eficiente para o DebxMail.
 
-O **Kroma** é um daemon escrito em Rust que monitora uma fila de e-mails armazenada em um banco Oracle (`A_MAIL_QUEUE` e `A_MAIL_ANEX`) e os envia de forma assíncrona via SMTP. Ele foi criado para substituir o DebxMail em ambientes que utilizam o sistema **Debx (Zucchetti)**, mas pode ser adaptado para qualquer cenário com estrutura de fila similar.
+O **Kroma** é um daemon escrito em Rust que monitora uma fila de e-mails armazenada em um banco Oracle (`A_MAIL_QUEUE` e `A_MAIL_ANEX`) e os envia de forma assíncrona via SMTP. Ele foi criado para substituir o DebxMail com uma solução mais leve e eficiente.
 
 ---
 
@@ -23,6 +23,7 @@ O **Kroma** é um daemon escrito em Rust que monitora uma fila de e-mails armaze
 
 - [Rust](https://rustup.rs/) (edição 2024)
 - [Oracle Instant Client](https://www.oracle.com/database/technologies/instant-client.html) instalado e configurado no `PATH` / `LD_LIBRARY_PATH`
+  - **Importante:** Defina a variável de ambiente `OCI_LIB_DIR` apontando para o diretório das bibliotecas do Oracle SDK (ex: `/opt/oracle/instantclient_21_13` ou `C:\Oracle\instantclient_21_13`). Isso é necessário para que a dependência `sibyl` compile corretamente.
 - Acesso a um banco Oracle com as tabelas `A_MAIL_QUEUE` e `A_MAIL_ANEX` (estrutura padrão do Debx)
 - Servidor SMTP acessível (com suporte a TLS ou STARTTLS)
 
@@ -33,6 +34,11 @@ O **Kroma** é um daemon escrito em Rust que monitora uma fila de e-mails armaze
 ```bash
 git clone https://github.com/seu-usuario/kroma.git
 cd kroma
+
+# Defina a variável OCI_LIB_DIR (ajuste o caminho conforme sua instalação do Oracle Instant Client)
+export OCI_LIB_DIR=/opt/oracle/instantclient_21_13
+
+# Compile o projeto
 cargo build --release
 ```
 
@@ -100,7 +106,7 @@ Envia um e-mail de teste real para um endereço específico:
 │                        Kroma                            │
 │                                                         │
 │  1. Aguarda o intervalo configurado                     │
-│  2. Consulta A_MAIL_QUEUE  │
+│  2. Consulta A_MAIL_QUEUE                               │
 │  3. Para cada e-mail:                                   │
 │     a. Busca anexos em A_MAIL_ANEX                      │
 │     b. Monta e envia via SMTP                           │
@@ -109,7 +115,7 @@ Envia um e-mail de teste real para um endereço específico:
 └─────────────────────────────────────────────────────────┘
 ```
 
-O Kroma lê diretamente das tabelas de fila do Debx (`A_MAIL_QUEUE` para os e-mails e `A_MAIL_ANEX` para os anexos) e reporta o resultado de cada envio chamando a procedure `CONSOLIDADO.DEBXMAIL.FINAL_ENVIO`, mantendo compatibilidade total com o banco.
+O Kroma lê diretamente das tabelas de fila do Debx (`A_MAIL_QUEUE` para os e-mails e `A_MAIL_ANEX` para os anexos) e reporta o resultado de cada envio chamando a procedure `CONSOLIDADO.DEBXMAIL.FINAL_ENVIO()`.
 
 ---
 
@@ -132,4 +138,3 @@ Distribuído sob a licença [MIT](LICENSE).
 ---
 
 > **Nota:** O Kroma integra-se com tabelas e procedures do sistema Debx (Zucchetti), mas não distribui nem contém código proprietário desse sistema. Toda a lógica de envio e integração é independente.
-
