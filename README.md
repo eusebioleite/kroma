@@ -24,7 +24,6 @@ O **Kroma** é um daemon escrito em Rust que monitora uma fila de e-mails armaze
 - [Rust](https://rustup.rs/) (edição 2024)
 - [Oracle Instant Client](https://www.oracle.com/database/technologies/instant-client.html) instalado e configurado no `PATH` / `LD_LIBRARY_PATH`
   - **Importante:** Defina a variável de ambiente `OCI_LIB_DIR` apontando para o diretório das bibliotecas do Oracle SDK:
-    - **Linux:** `/opt/oracle/instantclient_21_13`
     - **Windows:** `C:\Oracle\instantclient_21_13\sdk\lib\msvc`
 - Acesso a um banco Oracle com as tabelas `A_MAIL_QUEUE` e `A_MAIL_ANEX` (estrutura padrão do Debx)
 - Servidor SMTP acessível (com suporte a TLS ou STARTTLS)
@@ -32,21 +31,6 @@ O **Kroma** é um daemon escrito em Rust que monitora uma fila de e-mails armaze
 ---
 
 ## Instalação
-
-### Linux
-
-```bash
-git clone https://github.com/seu-usuario/kroma.git
-cd kroma
-
-# Defina a variável OCI_LIB_DIR
-export OCI_LIB_DIR=/opt/oracle/instantclient_21_13
-
-# Compile o projeto
-cargo build --release
-```
-
-### Windows
 
 ```bash
 git clone https://github.com/seu-usuario/kroma.git
@@ -59,7 +43,7 @@ set OCI_LIB_DIR=C:\Oracle\instantclient_21_13\sdk\lib\msvc
 cargo build --release
 ```
 
-O binário estará em `target/release/kroma.exe` (Windows) ou `target/release/kroma` (Linux).
+O binário estará em `target/release/kroma.exe`.
 
 ---
 
