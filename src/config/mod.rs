@@ -32,8 +32,12 @@ pub struct Database {
 }
 
 impl Database {
-    fn default_pool_min() -> u32 { 1 }
-    fn default_pool_max() -> u32 { 5 }
+    fn default_pool_min() -> u32 {
+        1
+    }
+    fn default_pool_max() -> u32 {
+        5
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -128,4 +132,125 @@ pub fn init() -> anyhow::Result<()> {
         .map_err(|_| anyhow::anyhow!("config::init() was called more than once"))?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn valid_config() -> Config {
+        Config {
+            credentials: Credentials {
+                user: "user@example.com".into(),
+                password: "password123".into(),
+            },
+            server: Server {
+                host: "smtp.example.com".into(),
+                port: 587,
+            },
+            service: Service {
+                interval: 60,
+                throttle: 100,
+            },
+            database: Database {
+                user: "oracle_user".into(),
+                password: "oracle_pass".into(),
+                host: "oracle.example.com".into(),
+                port: 1521,
+                sid: "ORCL".into(),
+                pool_min: 1,
+                pool_max: 5,
+            },
+        }
+    }
+
+    #[test]
+    fn test_valid_config() {
+        let cfg = valid_config();
+        assert!(cfg.validate().is_ok());
+    }
+
+    #[test]
+    fn test_empty_credentials_user() {
+        let mut cfg = valid_config();
+        cfg.credentials.user = "   ".into();
+        let err = cfg.validate().unwrap_err();
+        assert!(err.contains("[config.credentials]"));
+    }
+
+    #[test]
+    fn test_empty_credentials_password() {
+        let mut cfg = valid_config();
+        cfg.credentials.password = "".into();
+        let err = cfg.validate().unwrap_err();
+        assert!(err.contains("[config.credentials]"));
+    }
+
+    #[test]
+    fn test_empty_database_fields() {
+        let mut cfg = valid_config();
+        cfg.database.user = "".into();
+        assert!(cfg.validate().is_err());
+
+        let mut cfg = valid_config();
+        cfg.database.password = "".into();
+        assert!(cfg.validate().is_err());
+
+        let mut cfg = valid_config();
+        cfg.database.host = "".into();
+        assert!(cfg.validate().is_err());
+
+        let mut cfg = valid_config();
+        cfg.database.sid = "".into();
+        assert!(cfg.validate().is_err());
+    }
+
+    #[test]
+    fn test_invalid_server_fields() {
+        let mut cfg = valid_config();
+        cfg.server.host = "  ".into();
+        assert!(cfg.validate().is_err());
+
+        let mut cfg = valid_config();
+        cfg.server.port = 0;
+        let err = cfg.validate().unwrap_err();
+        assert!(err.contains("positive integer"));
+    }
+
+    #[test]
+    fn test_pool_min_greater_than_pool_max() {
+        let mut cfg = valid_config();
+        cfg.database.pool_min = 10;
+        cfg.database.pool_max = 5;
+        let err = cfg.validate().unwrap_err();
+        assert!(err.contains("pool_min (10) must be <= pool_max (5)"));
+    }
+
+    #[test]
+    fn test_deserialize_toml_with_defaults() {
+        let toml_str = r#"
+            [credentials]
+            user = "test@example.com"
+            password = "secret"
+
+            [server]
+            host = "smtp.example.com"
+            port = 465
+
+            [service]
+            interval = 30
+            throttle = 50
+
+            [database]
+            user = "dbuser"
+            password = "dbpassword"
+            host = "localhost"
+            port = 1521
+            sid = "XE"
+        "#;
+        let cfg: Config = toml::from_str(toml_str).expect("failed to deserialize config");
+        assert_eq!(cfg.database.pool_min, 1);
+        assert_eq!(cfg.database.pool_max, 5);
+        assert!(cfg.validate().is_ok());
+    }
 }

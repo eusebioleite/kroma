@@ -1,7 +1,9 @@
 use anyhow::Context;
 use lettre::{
     AsyncSmtpTransport, AsyncTransport, Tokio1Executor,
-    message::{MessageBuilder, header::ContentType, MultiPart, SinglePart, Attachment as LettreAttachment},
+    message::{
+        Attachment as LettreAttachment, MessageBuilder, MultiPart, SinglePart, header::ContentType,
+    },
     transport::smtp::authentication::Credentials,
 };
 use tracing::{error, info};
@@ -11,8 +13,8 @@ use crate::{models::Mail, repository::update_status};
 mod config;
 mod database;
 mod log;
-mod repository;
 mod models;
+mod repository;
 
 /// Kroma — processes and sends queued emails from Oracle.
 #[derive(argh::FromArgs)]
@@ -62,15 +64,16 @@ async fn main() -> anyhow::Result<()> {
         cfg.credentials.password.clone(),
     );
     let builder = if cfg.server.port == 465 {
-        AsyncSmtpTransport::<Tokio1Executor>::relay(&cfg.server.host).context("Failed to create SMTP relay builder")?
+        AsyncSmtpTransport::<Tokio1Executor>::relay(&cfg.server.host)
+            .context("Failed to create SMTP relay builder")?
     } else {
-        AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(&cfg.server.host).context("Failed to create STARTTLS SMTP relay builder")?
+        AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(&cfg.server.host)
+            .context("Failed to create STARTTLS SMTP relay builder")?
     };
     let mailer: AsyncSmtpTransport<Tokio1Executor> = builder
         .credentials(credentials)
         .port(cfg.server.port)
         .build();
-
 
     let mut interval = tokio::time::interval(std::time::Duration::from_secs(
         config::get().service.interval,
@@ -127,7 +130,9 @@ async fn main() -> anyhow::Result<()> {
                 }
                 Err(e) => {
                     error!("Failed to send mail {}: {:#}", mail.code, e);
-                    if let Err(ue) = update_status(mail.code, "N", Some(&e.to_string()), &mail.to).await {
+                    if let Err(ue) =
+                        update_status(mail.code, "N", Some(&e.to_string()), &mail.to).await
+                    {
                         error!("Failed to update error status for {}: {:#}", mail.code, ue);
                     }
                 }
@@ -165,17 +170,26 @@ async fn test_config(target: Option<String>) {
             .credentials(credentials.clone())
             .port(cfg.server.port)
             .build();
-            
+
         if let Some(email_addr) = &target {
-            let attachment = LettreAttachment::new(String::from("test.txt"))
-                .body(b"This is a test attachment from Kroma.".to_vec(), ContentType::parse("text/plain").unwrap());
-            
+            let attachment = LettreAttachment::new(String::from("test.txt")).body(
+                b"This is a test attachment from Kroma.".to_vec(),
+                ContentType::parse("text/plain").unwrap(),
+            );
+
             let multipart = MultiPart::mixed()
-                .singlepart(SinglePart::plain(String::from("This is a test email from Kroma.")))
+                .singlepart(SinglePart::plain(String::from(
+                    "This is a test email from Kroma.",
+                )))
                 .singlepart(attachment);
 
             let email = MessageBuilder::new()
-                .from(cfg.credentials.user.parse().context("Error parsing 'from' (using credentials user).")?)
+                .from(
+                    cfg.credentials
+                        .user
+                        .parse()
+                        .context("Error parsing 'from' (using credentials user).")?,
+                )
                 .to(email_addr.parse().context("Error parsing 'to'.")?)
                 .subject("Kroma Test Email")
                 .multipart(multipart)
@@ -189,9 +203,9 @@ async fn test_config(target: Option<String>) {
     .await;
 
     match smtp_result {
-        Ok(true)  => println!("ok"),
+        Ok(true) => println!("ok"),
         Ok(false) => println!("FAIL — server refused the connection"),
-        Err(e)    => println!("FAIL — {e}"),
+        Err(e) => println!("FAIL — {e}"),
     }
 
     print!(
@@ -206,54 +220,71 @@ async fn test_config(target: Option<String>) {
     .await;
 
     match db_result {
-        Ok(())  => println!("ok"),
-        Err(e)  => println!("FAIL — {e}"),
+        Ok(()) => println!("ok"),
+        Err(e) => println!("FAIL — {e}"),
     }
 }
 
-async fn send_mail(mailer: &AsyncSmtpTransport<Tokio1Executor>, mail: &Mail, attachments: Option<Vec<crate::models::Attachment>>) -> anyhow::Result<()> {
+fn parse_recipients(to: &str) -> Vec<&str> {
+    to.split(';')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .collect()
+}
+
+fn extension_to_mime(extension: &str) -> &'static str {
+    match extension.to_lowercase().as_str() {
+        "pdf" => "application/pdf",
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "txt" => "text/plain",
+        "html" | "htm" => "text/html",
+        "csv" => "text/csv",
+        "xml" => "application/xml",
+        _ => "application/octet-stream",
+    }
+}
+
+fn build_attachment_filename(name: &str, extension: &str) -> String {
+    let lower_ext = extension.to_lowercase();
+    if name.to_lowercase().ends_with(&format!(".{}", lower_ext)) {
+        name.to_string()
+    } else {
+        format!("{}.{}", name, extension)
+    }
+}
+
+async fn send_mail(
+    mailer: &AsyncSmtpTransport<Tokio1Executor>,
+    mail: &Mail,
+    attachments: Option<Vec<crate::models::Attachment>>,
+) -> anyhow::Result<()> {
     let mut email = MessageBuilder::new()
         .from(mail.from.parse().context("Error parsing 'from'.")?)
         .subject(&mail.subject);
 
-    for recipient in mail.to.split(';') {
-        let recipient = recipient.trim();
-        if !recipient.is_empty() {
-            email = email.to(recipient.parse().with_context(|| format!("Error parsing 'to' address: {}", recipient))?);
-        }
+    for recipient in parse_recipients(&mail.to) {
+        email = email.to(recipient
+            .parse()
+            .with_context(|| format!("Error parsing 'to' address: {}", recipient))?);
     }
 
-    let mut multipart = MultiPart::mixed()
-        .singlepart(SinglePart::html(mail.html.clone()));
+    let mut multipart = MultiPart::mixed().singlepart(SinglePart::html(mail.html.clone()));
 
     if let Some(atts) = attachments {
         for att in atts {
-            let mime_str = match att.extension.to_lowercase().as_str() {
-                "pdf" => "application/pdf",
-                "png" => "image/png",
-                "jpg" | "jpeg" => "image/jpeg",
-                "txt" => "text/plain",
-                "html" | "htm" => "text/html",
-                "csv" => "text/csv",
-                "xml" => "application/xml",
-                _ => "application/octet-stream",
-            };
-            let content_type = ContentType::parse(mime_str).unwrap_or_else(|_| ContentType::parse("application/octet-stream").unwrap());
-            
-            let file_name = if att.name.to_lowercase().ends_with(&format!(".{}", att.extension.to_lowercase())) {
-                att.name.clone()
-            } else {
-                format!("{}.{}", att.name, att.extension)
-            };
-            
+            let mime_str = extension_to_mime(&att.extension);
+            let content_type = ContentType::parse(mime_str)
+                .unwrap_or_else(|_| ContentType::parse("application/octet-stream").unwrap());
+
+            let file_name = build_attachment_filename(&att.name, &att.extension);
+
             let lettre_att = if att.inline == "1" {
-                LettreAttachment::new_inline(file_name.clone())
-                    .body(att.content, content_type)
+                LettreAttachment::new_inline(file_name.clone()).body(att.content, content_type)
             } else {
-                LettreAttachment::new(file_name)
-                    .body(att.content, content_type)
+                LettreAttachment::new(file_name).body(att.content, content_type)
             };
-            
+
             multipart = multipart.singlepart(lettre_att);
         }
     }
@@ -262,9 +293,68 @@ async fn send_mail(mailer: &AsyncSmtpTransport<Tokio1Executor>, mail: &Mail, att
         .multipart(multipart)
         .context("Error building email.")?;
 
-    mailer.send(email)
-        .await
-        .context("Error sending email.")?;
+    mailer.send(email).await.context("Error sending email.")?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_recipients_single_and_multiple() {
+        let recipients =
+            parse_recipients("user1@example.com; user2@example.com ;user3@example.com");
+        assert_eq!(
+            recipients,
+            vec![
+                "user1@example.com",
+                "user2@example.com",
+                "user3@example.com"
+            ]
+        );
+    }
+
+    #[test]
+    fn test_parse_recipients_empty_and_spaces() {
+        let recipients = parse_recipients(" ;  ; user@example.com ; ; ");
+        assert_eq!(recipients, vec!["user@example.com"]);
+
+        let empty = parse_recipients("   ;   ");
+        assert!(empty.is_empty());
+    }
+
+    #[test]
+    fn test_extension_to_mime() {
+        assert_eq!(extension_to_mime("pdf"), "application/pdf");
+        assert_eq!(extension_to_mime("PDF"), "application/pdf");
+        assert_eq!(extension_to_mime("png"), "image/png");
+        assert_eq!(extension_to_mime("jpg"), "image/jpeg");
+        assert_eq!(extension_to_mime("jpeg"), "image/jpeg");
+        assert_eq!(extension_to_mime("txt"), "text/plain");
+        assert_eq!(extension_to_mime("html"), "text/html");
+        assert_eq!(extension_to_mime("htm"), "text/html");
+        assert_eq!(extension_to_mime("csv"), "text/csv");
+        assert_eq!(extension_to_mime("xml"), "application/xml");
+        assert_eq!(extension_to_mime("unknown"), "application/octet-stream");
+    }
+
+    #[test]
+    fn test_build_attachment_filename() {
+        assert_eq!(
+            build_attachment_filename("relatorio", "pdf"),
+            "relatorio.pdf"
+        );
+        assert_eq!(
+            build_attachment_filename("relatorio.pdf", "pdf"),
+            "relatorio.pdf"
+        );
+        assert_eq!(
+            build_attachment_filename("RELATORIO.PDF", "pdf"),
+            "RELATORIO.PDF"
+        );
+        assert_eq!(build_attachment_filename("imagem", "PNG"), "imagem.PNG");
+        assert_eq!(build_attachment_filename("imagem.png", "PNG"), "imagem.png");
+    }
 }
