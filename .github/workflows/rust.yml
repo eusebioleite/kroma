@@ -10,7 +10,6 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
-# Permissão explícita necessária para que o GitHub Actions crie tags e releases
 permissions:
   contents: write
 
@@ -22,8 +21,32 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # Imperativo para que a action de versionamento leia o histórico
-
+          fetch-depth: 0
+      
+      - name: Setup Oracle Instant Client 19c
+        shell: pwsh
+        run: |
+          $basicUrl = "https://download.oracle.com/otn_software/nt/instantclient/2326300/instantclient-basic-windows.x64-23.26.3.0.0.zip"
+          $sdkUrl = "https://download.oracle.com/otn_software/nt/instantclient/2326300/instantclient-sdk-windows.x64-23.26.3.0.0.zip"
+          
+          Write-Host "Iniciando download da liturgia Oracle (Basic e SDK)..."
+          Invoke-WebRequest -Uri $basicUrl -OutFile "basic.zip"
+          Invoke-WebRequest -Uri $sdkUrl -OutFile "sdk.zip"
+          
+          Write-Host "Extraindo artefatos para C:\oracle..."
+          Expand-Archive -Path basic.zip -DestinationPath "C:\oracle"
+          Expand-Archive -Path sdk.zip -DestinationPath "C:\oracle"
+          
+          $clientPath = "C:\oracle\instant_client"
+          $sdkLibPath = "$clientPath\sdk\lib\msvc"
+          
+          Write-Host "Consolidando Variáveis de Ambiente..."
+          # Define a variável exigida pelo build script da crate sibyl
+          echo "OCI_LIB_DIR=$sdkLibPath" >> $env:GITHUB_ENV
+          
+          # Injeta a raiz do cliente no PATH para que o 'cargo test' e o binário encontrem a oci.dll
+          echo "$clientPath" >> $env:GITHUB_PATH
+                
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
